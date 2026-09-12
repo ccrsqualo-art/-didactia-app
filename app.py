@@ -325,6 +325,8 @@ with tab_contenido:
                                 "fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
                             })
                             st.session_state.contenido_actual = resultado
+                            if "widget_contenido" in st.session_state:
+                                del st.session_state["widget_contenido"]
                             st.rerun()
                         except Exception as e:
                             st.error(f"No se pudo procesar el contenido: {e}")
@@ -339,6 +341,8 @@ with tab_contenido:
                 st.write(v["version_anterior"])
                 if rol == "Instructor" and st.button("Revertir a esta versión", key=f"revertir_{i}"):
                     st.session_state.contenido_actual = v["version_anterior"]
+                    if "widget_contenido" in st.session_state:
+                        del st.session_state["widget_contenido"]
                     st.rerun()
 
     st.divider()
