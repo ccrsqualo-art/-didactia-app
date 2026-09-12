@@ -8,20 +8,22 @@ Aplicación de elección personal, aplicada al entorno profesional del autor
 propuesto en el enunciado original.
 
 Funcionalidades:
-- Generación de imágenes para material de curso (Pollinations.ai, gratuito)
+- Generación de imágenes ilustrativas para material de curso (Pollinations.ai)
+- Generación de diagramas de flujo correctos vía código Mermaid (Groq/Llama),
+  agregada tras detectar que los modelos de imagen no representan bien
+  diagramas con lógica real (ver nota de hallazgo en la Sección de diagramas).
 - Edición de contenido de texto con IA (Groq / Llama 3.3 70B)
 - Roles simples: Instructor / Revisor
 - Historial de versiones de contenido editado
 - Comentarios de revisión
 """
 
-import os
-import io
 import urllib.parse
 from datetime import datetime
 
 import streamlit as st
 import requests
+import streamlit.components.v1 as components
 from groq import Groq
 
 st.set_page_config(page_title="DidactIA", page_icon="🎨", layout="wide")
@@ -30,7 +32,6 @@ st.set_page_config(page_title="DidactIA", page_icon="🎨", layout="wide")
 # CONFIGURACIÓN
 # ============================================================================
 ESTILOS_IMAGEN = {
-    "Diagrama / esquema": "clean minimalist diagram, flat design, white background, vector style",
     "Ilustración": "digital illustration, soft colors, friendly educational style",
     "Realista": "photorealistic, high detail, professional photography style",
     "Acuarela": "watercolor painting style, soft edges, artistic",
@@ -43,11 +44,26 @@ ACCIONES_TEXTO = {
     "Generar variación": "Redacta una variación alternativa del siguiente texto, con el mismo propósito pero distinta redacción.",
 }
 
+SYSTEM_PROMPT_MERMAID = """Eres un asistente que convierte descripciones de procesos en código
+Mermaid válido para diagramas de flujo (flowchart TD).
+
+Reglas:
+- Responde ÚNICAMENTE con el código Mermaid, sin explicaciones, sin comentarios,
+  sin bloques de markdown (nada de ```mermaid).
+- Usa "flowchart TD" como primera línea.
+- Usa IDs cortos (A, B, C...) y etiquetas descriptivas entre corchetes.
+- Usa flechas simples (-->) para conectar los pasos en el orden lógico correcto.
+- Si el proceso tiene una decisión (sí/no), usa la sintaxis de rombo {Pregunta}
+  y etiqueta las flechas de salida con "Sí" y "No".
+- Máximo 10 nodos, para que el diagrama sea legible."""
+
 # ============================================================================
 # ESTADO DE SESIÓN
 # ============================================================================
 if "galeria" not in st.session_state:
     st.session_state.galeria = []
+if "diagramas" not in st.session_state:
+    st.session_state.diagramas = []
 if "contenido_actual" not in st.session_state:
     st.session_state.contenido_actual = ""
 if "historial_versiones" not in st.session_state:
@@ -68,6 +84,34 @@ def generar_imagen(prompt_usuario: str, estilo: str) -> bytes:
     return respuesta.content
 
 
+def generar_diagrama_mermaid(client: Groq, descripcion: str) -> str:
+    respuesta = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT_MERMAID},
+            {"role": "user", "content": descripcion},
+        ],
+        temperature=0.2,
+    )
+    codigo = respuesta.choices[0].message.content.strip()
+    # Por si el modelo agrega el bloque de markdown a pesar de la instrucción
+    codigo = codigo.replace("```mermaid", "").replace("```", "").strip()
+    return codigo
+
+
+def render_mermaid(codigo: str, key: str):
+    html = f"""
+    <div class="mermaid">
+    {codigo}
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script>
+        mermaid.initialize({{ startOnLoad: true, theme: 'default' }});
+    </script>
+    """
+    components.html(html, height=400, scrolling=True)
+
+
 def editar_contenido(client: Groq, texto_original: str, accion: str) -> str:
     instruccion = ACCIONES_TEXTO[accion]
     respuesta = client.chat.completions.create(
@@ -83,6 +127,13 @@ def editar_contenido(client: Groq, texto_original: str, accion: str) -> str:
         temperature=0.5,
     )
     return respuesta.choices[0].message.content.strip()
+
+
+def obtener_cliente_groq():
+    if not groq_api_key:
+        st.error("Ingresa tu API key de Groq en la barra lateral para continuar.")
+        return None
+    return Groq(api_key=groq_api_key)
 
 
 # ============================================================================
@@ -102,7 +153,7 @@ with st.sidebar:
     else:
         groq_api_key = st.text_input(
             "API key de Groq", type="password",
-            help="Obtén una gratis en console.groq.com/keys. No se guarda en ningún lado.",
+            help="Obtén una gratis en console.groq.com/keys. Necesaria para diagramas y edición de texto (no para imágenes ilustrativas).",
         )
 
     st.divider()
@@ -118,13 +169,20 @@ with st.sidebar:
 st.title("🎨 DidactIA")
 st.caption("Generador de Material Didáctico con IA — prototipo aplicado a capacitación corporativa")
 
-tab_imagenes, tab_contenido = st.tabs(["🖼️ Generación de imágenes", "✏️ Edición de contenido"])
+tab_imagenes, tab_diagramas, tab_contenido = st.tabs([
+    "🖼️ Imágenes ilustrativas", "🔀 Diagramas de flujo", "✏️ Edición de contenido",
+])
 
 # ============================================================================
-# TAB 1: GENERACIÓN DE IMÁGENES
+# TAB 1: IMÁGENES ILUSTRATIVAS (Pollinations)
 # ============================================================================
 with tab_imagenes:
-    st.subheader("Generar una imagen para tu material de curso")
+    st.subheader("Generar una imagen ilustrativa para tu material de curso")
+    st.caption(
+        "Úsalo para portadas, ambientación visual o ilustraciones de apoyo. "
+        "Para diagramas de flujo o procesos con pasos, usa la pestaña 'Diagramas de flujo' — "
+        "los modelos de imagen no representan bien la lógica de un proceso (ver nota ahí)."
+    )
 
     if rol != "Instructor":
         st.info("Estás en modo Revisor. Puedes ver la galería generada, pero solo el Instructor puede generar nuevas imágenes.")
@@ -133,7 +191,7 @@ with tab_imagenes:
     with col1:
         prompt_imagen = st.text_area(
             "Describe la imagen que necesitas",
-            placeholder="Ej. diagrama de flujo del proceso de aprobación de gastos en una planta de manufactura",
+            placeholder="Ej. escritorio de oficina moderno con laptop y gráficas financieras, ambiente profesional",
             disabled=(rol != "Instructor"),
         )
     with col2:
@@ -173,7 +231,68 @@ with tab_imagenes:
                 )
 
 # ============================================================================
-# TAB 2: EDICIÓN DE CONTENIDO
+# TAB 2: DIAGRAMAS DE FLUJO (Mermaid) — agregado tras el hallazgo 1
+# ============================================================================
+with tab_diagramas:
+    st.subheader("Generar un diagrama de flujo correcto")
+
+    with st.expander("📋 Por qué existe esta pestaña (hallazgo del desarrollo)"):
+        st.write(
+            "En una primera versión de esta app, los diagramas de proceso se generaban "
+            "con el mismo modelo de imágenes que las ilustraciones (Pollinations/difusión). "
+            "El resultado no representaba una secuencia lógica real: aparecían varias cajas "
+            "sueltas, sin conexión coherente entre ellas, y el texto dentro de la imagen salía "
+            "distorsionado o ilegible. La causa es que los modelos de difusión generan píxeles "
+            "por similitud visual con su entrenamiento, no comprenden relaciones lógicas entre "
+            "pasos ni texto como caracteres discretos. La corrección fue cambiar de enfoque: "
+            "en vez de pedirle a un modelo de imágenes que 'dibuje' el diagrama, se le pide a "
+            "un modelo de texto (Llama, vía Groq) que genere el código del diagrama en formato "
+            "Mermaid, y ese código se renderiza con una librería que sí entiende su estructura. "
+            "El modelo de texto nunca dibuja nada directamente; solo describe la lógica en un "
+            "lenguaje que otra herramienta sabe interpretar de forma exacta."
+        )
+
+    if rol != "Instructor":
+        st.info("Estás en modo Revisor. Puedes ver los diagramas generados, pero solo el Instructor puede generar nuevos.")
+
+    descripcion_proceso = st.text_area(
+        "Describe el proceso paso a paso",
+        placeholder="Ej. Un empleado solicita un gasto. El gerente revisa la solicitud. Si el monto excede $50,000, requiere aprobación adicional de Gerencia. Si no, se aprueba directamente y se registra el gasto.",
+        disabled=(rol != "Instructor"),
+    )
+
+    if st.button("Generar diagrama", type="primary", disabled=(rol != "Instructor")):
+        if not descripcion_proceso.strip():
+            st.warning("Describe el proceso antes de generar el diagrama.")
+        else:
+            client = obtener_cliente_groq()
+            if client:
+                with st.spinner("Generando diagrama..."):
+                    try:
+                        codigo_mermaid = generar_diagrama_mermaid(client, descripcion_proceso)
+                        st.session_state.diagramas.append({
+                            "descripcion": descripcion_proceso,
+                            "codigo": codigo_mermaid,
+                            "fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        })
+                        st.success("Diagrama generado correctamente.")
+                    except Exception as e:
+                        st.error(f"No se pudo generar el diagrama: {e}")
+
+    st.divider()
+    st.subheader("Diagramas generados en esta sesión")
+    if not st.session_state.diagramas:
+        st.caption("Aún no se ha generado ningún diagrama.")
+    else:
+        for i, d in enumerate(reversed(st.session_state.diagramas)):
+            st.caption(f"{d['fecha']} — {d['descripcion'][:80]}...")
+            render_mermaid(d["codigo"], key=f"mermaid_{i}")
+            with st.expander("Ver código Mermaid generado"):
+                st.code(d["codigo"], language="text")
+            st.divider()
+
+# ============================================================================
+# TAB 3: EDICIÓN DE CONTENIDO
 # ============================================================================
 with tab_contenido:
     st.subheader("Editar contenido de texto para tu curso")
@@ -194,22 +313,21 @@ with tab_contenido:
         if st.button("Aplicar con IA", type="primary"):
             if not st.session_state.contenido_actual.strip():
                 st.warning("Ingresa un contenido antes de aplicar una acción.")
-            elif not groq_api_key:
-                st.error("Ingresa tu API key de Groq en la barra lateral para continuar.")
             else:
-                with st.spinner("Procesando con IA..."):
-                    try:
-                        client = Groq(api_key=groq_api_key)
-                        resultado = editar_contenido(client, st.session_state.contenido_actual, accion_sel)
-                        st.session_state.historial_versiones.append({
-                            "version_anterior": st.session_state.contenido_actual,
-                            "accion": accion_sel,
-                            "fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        })
-                        st.session_state.contenido_actual = resultado
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"No se pudo procesar el contenido: {e}")
+                client = obtener_cliente_groq()
+                if client:
+                    with st.spinner("Procesando con IA..."):
+                        try:
+                            resultado = editar_contenido(client, st.session_state.contenido_actual, accion_sel)
+                            st.session_state.historial_versiones.append({
+                                "version_anterior": st.session_state.contenido_actual,
+                                "accion": accion_sel,
+                                "fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            })
+                            st.session_state.contenido_actual = resultado
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"No se pudo procesar el contenido: {e}")
 
     st.divider()
     st.subheader("Historial de versiones")
@@ -241,6 +359,6 @@ st.divider()
 st.caption(
     "DidactIA — Prototipo académico, Caso Práctico Unidad 3, materia Generative IA, "
     "Maestría en Ciencia de Datos y Analítica Visual, Instituto Europeo de Posgrado. "
-    "Generación de imágenes vía Pollinations.ai (gratuito, sin clave). Edición de "
-    "texto vía Groq / Llama 3.3 70B (capa gratuita)."
+    "Imágenes ilustrativas vía Pollinations.ai (gratuito, sin clave). Diagramas de flujo "
+    "y edición de texto vía Groq / Llama 3.3 70B (capa gratuita)."
 )
