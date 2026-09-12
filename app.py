@@ -318,9 +318,12 @@ with tab_contenido:
                 if client:
                     with st.spinner("Procesando con IA..."):
                         try:
-                            resultado = editar_contenido(client, st.session_state.contenido_actual, accion_sel)
+                            texto_previo = st.session_state.contenido_actual
+                            resultado = editar_contenido(client, texto_previo, accion_sel)
+                            st.session_state.debug_texto_previo = texto_previo
+                            st.session_state.debug_resultado = resultado
                             st.session_state.historial_versiones.append({
-                                "version_anterior": st.session_state.contenido_actual,
+                                "version_anterior": texto_previo,
                                 "accion": accion_sel,
                                 "fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
                             })
@@ -330,6 +333,15 @@ with tab_contenido:
                             st.rerun()
                         except Exception as e:
                             st.error(f"No se pudo procesar el contenido: {e}")
+                            st.exception(e)
+
+    if "debug_resultado" in st.session_state:
+        with st.expander("🔧 Depuración temporal — comparación directa (quitar después)", expanded=True):
+            st.write(f"**Texto enviado a la IA** ({len(st.session_state.debug_texto_previo)} caracteres):")
+            st.code(st.session_state.debug_texto_previo)
+            st.write(f"**Resultado devuelto por la IA** ({len(st.session_state.debug_resultado)} caracteres):")
+            st.code(st.session_state.debug_resultado)
+            st.write(f"**¿Son idénticos?** {st.session_state.debug_texto_previo.strip() == st.session_state.debug_resultado.strip()}")
 
     st.divider()
     st.subheader("Historial de versiones")
