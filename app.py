@@ -18,6 +18,7 @@ Funcionalidades:
 - Comentarios de revisión
 """
 
+import re
 import urllib.parse
 from datetime import datetime
 
@@ -72,6 +73,10 @@ if "historial_versiones" not in st.session_state:
     st.session_state.historial_versiones = []
 if "comentarios" not in st.session_state:
     st.session_state.comentarios = []
+if "contenido_original_sesion" not in st.session_state:
+    st.session_state.contenido_original_sesion = None
+if "terminos_nuevos_detectados" not in st.session_state:
+    st.session_state.terminos_nuevos_detectados = []
 
 
 # ============================================================================
@@ -136,6 +141,52 @@ def obtener_cliente_groq():
         st.error("Ingresa tu API key de Groq en la barra lateral para continuar.")
         return None
     return Groq(api_key=groq_api_key)
+
+
+# Palabras que se capitalizan por estar al inicio de oración o ser muy comunes,
+# para no marcarlas como "términos nuevos" aunque no aparezcan literalmente
+# en el texto original (reduce falsos positivos del guardrail).
+PALABRAS_COMUNES_IGNORAR = {
+    "el", "la", "los", "las", "un", "una", "unos", "unas", "este", "esta",
+    "estos", "estas", "su", "sus", "que", "como", "por", "para", "con",
+    "sin", "al", "del", "en", "se", "es", "son", "fue", "fueron", "cada",
+    "todo", "toda", "todos", "todas", "también", "además", "así", "aquí",
+    "durante", "entre", "sobre", "finalmente", "asimismo", "otro", "otra",
+    "módulo", "módulos", "capacitación", "empleados", "empleado",
+}
+
+
+def detectar_terminos_nuevos(texto_original: str, texto_nuevo: str) -> list:
+    """
+    Guardrail simple: compara el texto editado contra el texto original de la
+    sesión (antes de cualquier edición con IA) y señala palabras que empiezan
+    con mayúscula y no aparecen en el original — candidatos a nombres propios,
+    marcas o herramientas inventadas por el modelo. Es una detección
+    heurística, no infalible: puede marcar cosas legítimas (falsos positivos)
+    y no atrapar todo lo inventado (falsos negativos). Sirve como una alerta
+    para que el Revisor le ponga atención, no como una verificación garantizada.
+    """
+    if not texto_original:
+        return []
+
+    palabras_originales = {
+        p.lower() for p in re.findall(r"[A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ]{2,}", texto_original)
+    }
+
+    candidatos = re.findall(r"[A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ]{2,}", texto_nuevo)
+
+    nuevos = []
+    vistos = set()
+    for c in candidatos:
+        c_lower = c.lower()
+        if c_lower in palabras_originales or c_lower in PALABRAS_COMUNES_IGNORAR:
+            continue
+        if c_lower in vistos:
+            continue
+        vistos.add(c_lower)
+        nuevos.append(c)
+
+    return nuevos
 
 
 # ============================================================================
@@ -309,6 +360,21 @@ with tab_contenido:
     if rol == "Instructor":
         st.session_state.contenido_actual = contenido_widget
 
+    if st.session_state.terminos_nuevos_detectados:
+        with st.container():
+            st.warning(
+                "⚠️ **Posibles términos no verificados** — estas palabras aparecen en el "
+                "contenido pero no estaban en el texto original de esta sesión. Podrían ser "
+                "nombres, marcas o herramientas inventadas por la IA. Revísalas antes de usar "
+                "este contenido en un curso real:\n\n"
+                + ", ".join(f"`{t}`" for t in st.session_state.terminos_nuevos_detectados)
+            )
+            st.caption(
+                "Detección heurística (basada en mayúsculas), no infalible — puede marcar "
+                "palabras legítimas y no atrapar todo lo inventado. Es una alerta para el "
+                "Revisor, no una verificación garantizada."
+            )
+
     if rol == "Instructor":
         accion_sel = st.selectbox("¿Qué quieres hacer con este contenido?", list(ACCIONES_TEXTO.keys()))
 
@@ -321,6 +387,8 @@ with tab_contenido:
                     with st.spinner("Procesando con IA..."):
                         try:
                             texto_previo = st.session_state.contenido_actual
+                            if st.session_state.contenido_original_sesion is None:
+                                st.session_state.contenido_original_sesion = texto_previo
                             resultado = editar_contenido(client, texto_previo, accion_sel)
                             st.session_state.historial_versiones.append({
                                 "version_anterior": texto_previo,
@@ -329,6 +397,9 @@ with tab_contenido:
                             })
                             st.session_state.contenido_actual = resultado
                             st.session_state.version_contenido += 1
+                            st.session_state.terminos_nuevos_detectados = detectar_terminos_nuevos(
+                                st.session_state.contenido_original_sesion, resultado
+                            )
                             st.rerun()
                         except Exception as e:
                             st.error(f"No se pudo procesar el contenido: {e}")
@@ -344,6 +415,9 @@ with tab_contenido:
                 if rol == "Instructor" and st.button("Revertir a esta versión", key=f"revertir_{i}"):
                     st.session_state.contenido_actual = v["version_anterior"]
                     st.session_state.version_contenido += 1
+                    st.session_state.terminos_nuevos_detectados = detectar_terminos_nuevos(
+                        st.session_state.contenido_original_sesion, v["version_anterior"]
+                    )
                     st.rerun()
 
     st.divider()
