@@ -66,6 +66,8 @@ if "diagramas" not in st.session_state:
     st.session_state.diagramas = []
 if "contenido_actual" not in st.session_state:
     st.session_state.contenido_actual = ""
+if "version_contenido" not in st.session_state:
+    st.session_state.version_contenido = 0
 if "historial_versiones" not in st.session_state:
     st.session_state.historial_versiones = []
 if "comentarios" not in st.session_state:
@@ -302,7 +304,7 @@ with tab_contenido:
         value=st.session_state.contenido_actual,
         height=150,
         disabled=(rol != "Instructor"),
-        key="widget_contenido",
+        key=f"widget_contenido_{st.session_state.version_contenido}",
     )
     if rol == "Instructor":
         st.session_state.contenido_actual = contenido_widget
@@ -320,28 +322,16 @@ with tab_contenido:
                         try:
                             texto_previo = st.session_state.contenido_actual
                             resultado = editar_contenido(client, texto_previo, accion_sel)
-                            st.session_state.debug_texto_previo = texto_previo
-                            st.session_state.debug_resultado = resultado
                             st.session_state.historial_versiones.append({
                                 "version_anterior": texto_previo,
                                 "accion": accion_sel,
                                 "fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
                             })
                             st.session_state.contenido_actual = resultado
-                            if "widget_contenido" in st.session_state:
-                                del st.session_state["widget_contenido"]
+                            st.session_state.version_contenido += 1
                             st.rerun()
                         except Exception as e:
                             st.error(f"No se pudo procesar el contenido: {e}")
-                            st.exception(e)
-
-    if "debug_resultado" in st.session_state:
-        with st.expander("🔧 Depuración temporal — comparación directa (quitar después)", expanded=True):
-            st.write(f"**Texto enviado a la IA** ({len(st.session_state.debug_texto_previo)} caracteres):")
-            st.code(st.session_state.debug_texto_previo)
-            st.write(f"**Resultado devuelto por la IA** ({len(st.session_state.debug_resultado)} caracteres):")
-            st.code(st.session_state.debug_resultado)
-            st.write(f"**¿Son idénticos?** {st.session_state.debug_texto_previo.strip() == st.session_state.debug_resultado.strip()}")
 
     st.divider()
     st.subheader("Historial de versiones")
@@ -353,8 +343,7 @@ with tab_contenido:
                 st.write(v["version_anterior"])
                 if rol == "Instructor" and st.button("Revertir a esta versión", key=f"revertir_{i}"):
                     st.session_state.contenido_actual = v["version_anterior"]
-                    if "widget_contenido" in st.session_state:
-                        del st.session_state["widget_contenido"]
+                    st.session_state.version_contenido += 1
                     st.rerun()
 
     st.divider()
