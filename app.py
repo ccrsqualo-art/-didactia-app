@@ -86,7 +86,7 @@ def generar_imagen(prompt_usuario: str, estilo: str) -> bytes:
 
 def generar_diagrama_mermaid(client: Groq, descripcion: str) -> str:
     respuesta = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT_MERMAID},
             {"role": "user", "content": descripcion},
@@ -115,7 +115,7 @@ def render_mermaid(codigo: str, key: str):
 def editar_contenido(client: Groq, texto_original: str, accion: str) -> str:
     instruccion = ACCIONES_TEXTO[accion]
     respuesta = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         messages=[
             {"role": "system", "content": (
                 "Eres un asistente de redacción para material didáctico de cursos "
